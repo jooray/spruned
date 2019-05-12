@@ -214,9 +214,9 @@ class TestHeadersReactor(unittest.TestCase):
         Mock.assert_not_called(peer.close)
 
         self.assertEqual(2, len(self.interface.method_calls))
-        self.assertEqual(3, len(self.repo.method_calls))
+        self.assertEqual(2, len(self.repo.method_calls))
         self.assertEqual(0, len(self.electrod_loop.method_calls))
-        self.assertFalse(self.sut.synced)
+        self.assertTrue(self.sut.synced)
         self.assertIn(loc_header, self.sut.orphans_headers)
 
     def test_orphan_received_saved_ok(self):
@@ -246,7 +246,7 @@ class TestHeadersReactor(unittest.TestCase):
         Mock.assert_called_with(self.interface.get_header, 2020, fail_silent_out_of_range=True)
 
         self.assertEqual(3, len(self.interface.method_calls))
-        self.assertEqual(2, len(self.repo.method_calls))
+        self.assertEqual(0, len(self.repo.method_calls))
         self.assertEqual(0, len(self.electrod_loop.method_calls))
         self.assertTrue(self.sut.synced)
         self.assertNotIn(loc_header, self.sut.orphans_headers)
@@ -279,9 +279,9 @@ class TestHeadersReactor(unittest.TestCase):
         Mock.assert_called_with(self.repo.save_headers, [h for h in _headers if h['block_height'] > 2020])
         Mock.assert_not_called(peer.close)
         self.assertEqual(self.sut._last_processed_header, _headers[-1])
-        self.assertEqual(self.sut.synced, True)
+        self.assertEqual(self.sut.synced, False)
         self.assertEqual(1, len(self.interface.method_calls))
-        self.assertEqual(2, len(self.repo.method_calls))
+        self.assertEqual(1, len(self.repo.method_calls))
         self.assertEqual(0, len(self.electrod_loop.method_calls))
 
     def test_received_header_that_doesnt_link_to_previous(self):
@@ -316,12 +316,12 @@ class TestHeadersReactor(unittest.TestCase):
         self.repo.save_header.side_effect = [exceptions.HeadersInconsistencyException]
         self.loop.run_until_complete(self.sut.on_new_header(peer, net_header))
         Mock.assert_called_once_with(self.repo.remove_headers_after_height, 2016)
-        self.assertEqual(self.repo.get_best_header.call_count, 2)
+        self.assertEqual(self.repo.get_best_header.call_count, 1)
         Mock.assert_called_once_with(self.repo.remove_headers_after_height, 2016)
 
         self.assertIsNone(self.sut._last_processed_header)
         self.assertEqual(0, len(self.interface.method_calls), msg=str(self.interface.method_calls))
-        self.assertEqual(4, len(self.repo.method_calls), msg=str(self.repo.method_calls))
+        self.assertEqual(3, len(self.repo.method_calls), msg=str(self.repo.method_calls))
         self.assertEqual(0, len(self.electrod_loop.method_calls), msg=str(self.electrod_loop.method_calls))
         self.assertFalse(self.sut.synced)
         self.assertFalse(self.sut.lock.locked())
@@ -441,7 +441,7 @@ class TestHeadersReactor(unittest.TestCase):
         self.assertEqual(1, len(self.interface.method_calls))
         self.assertEqual(2, len(self.electrod_loop.method_calls))
         self.assertEqual(0, len(self.repo.method_calls))
-        self.assertTrue(self.sut.synced)
+        self.assertFalse(self.sut.synced)
 
     def test_on_new_headers_new_header(self):
         """
@@ -466,7 +466,7 @@ class TestHeadersReactor(unittest.TestCase):
         self.repo.save_header.side_effect = lambda a, b, c, d: True
 
         self.loop.run_until_complete(self.sut.on_new_header(peer, net_header))
-        self.assertEqual(self.repo.get_best_header.call_count, 1)
+        self.assertEqual(self.repo.get_best_header.call_count, 0)
         Mock.assert_called_once_with(
             self.repo.save_header,
             net_header['block_hash'], net_header['block_height'],

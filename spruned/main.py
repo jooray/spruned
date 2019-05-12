@@ -23,12 +23,12 @@ async def main_task(loop):  # pragma: no cover
                 await cache.check()
         except asyncio.TimeoutError:
             Logger.cache.error('There must be an error in cache, 30 seconds to check are too many')
-        headers_reactor.add_on_new_header_callback(blocks_reactor.start)
-        headers_reactor.add_on_best_height_hit_volatile_callbacks(blocks_reactor.bootstrap_blocks)
+        #headers_reactor.add_on_new_header_callback(blocks_reactor.start)
+        #headers_reactor.add_on_best_height_hit_volatile_callbacks(blocks_reactor.bootstrap_blocks)
         loop.create_task(headers_reactor.start())
-        loop.create_task(p2p_interface.start())
-        loop.create_task(async_delayed_task(cache.lurk(), 600))
-        loop.create_task(async_delayed_task(loop_collect_garbage(loop), 300))
+        #loop.create_task(p2p_interface.start())
+        #loop.create_task(async_delayed_task(cache.lurk(), 600))
+        #loop.create_task(async_delayed_task(loop_collect_garbage(loop), 300))
     finally:
         pass
 

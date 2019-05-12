@@ -40,7 +40,8 @@ class Context(dict):
                     'zmqpubrawtx': '',
                     'zmqpubhashtx': '',
                     'zmqpubrawblock': '',
-                    'mempool_size': 0
+                    'mempool_size': 0,
+                    'blocknotify': ''
                 }
             }
         )
@@ -154,6 +155,10 @@ class Context(dict):
     def zmqpubrawblock(self) -> str:
         return self._get_param('zmqpubrawblock')
 
+    @property
+    def blocknotify(self) -> str:
+        return self._get_param('blocknotify')
+
     def load_args(self, args: Namespace):
         self['args'] = {
             'datadir': args.datadir,
@@ -178,7 +183,8 @@ class Context(dict):
             'zmqpubrawtx': args.zmqpubrawtx,
             'zmqpubhashtx': args.zmqpubhashtx,
             'zmqpubrawblock': args.zmqpubrawblock,
-            'mempool_size': args.mempool_size
+            'mempool_size': args.mempool_size,
+            'blocknotify': args.blocknotify
         }
         self.apply_context()
 

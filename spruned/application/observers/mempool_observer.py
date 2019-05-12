@@ -1,6 +1,7 @@
 import asyncio
 import time
 
+import binascii
 from pycoin.block import Block
 
 from spruned.application.logging_factory import Logger
@@ -107,4 +108,4 @@ class MempoolObserver:
         for callback in self.on_transaction_callbacks:
             self.loop.create_task(callback(item['tx']))
         for callback in self.on_transaction_hash_callbacks:
-            self.loop.create_task(callback(item['tx']))
+            self.loop.create_task(callback(binascii.unhexlify(str(item['tx'].w_hash()))))

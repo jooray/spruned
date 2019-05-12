@@ -1,4 +1,5 @@
 import asyncio
+import random
 from typing import Dict
 import time
 from spruned.application.abstracts import HeadersRepository
@@ -7,7 +8,7 @@ from spruned.daemon.electrod.electrod_interface import ElectrodInterface
 from spruned.daemon import exceptions
 from spruned.application import database
 from spruned.application.logging_factory import Logger
-from spruned.application.tools import get_nearest_parent, async_delayed_task
+from spruned.application.tools import get_nearest_parent, async_delayed_task, deserialize_header
 
 
 class HeadersReactor:
@@ -52,22 +53,26 @@ class HeadersReactor:
         self.on_best_height_hit_persistent_callbacks.append(callback)
 
     def set_last_processed_header(self, last):
-        if last != self._last_processed_header:
-            self._last_processed_header = last
-            Logger.electrum.info(
-                'Last processed header: %s (%s)',
-                self._last_processed_header and self._last_processed_header['block_height'],
-                self._last_processed_header and self._last_processed_header['block_hash'],
-            )
-            if self._last_processed_header and self.synced:
-                for callback in self._on_new_best_header_callbacks:
-                    self.loop.create_task(callback(self._last_processed_header))
+        if last == self._last_processed_header:
+            return
+        if last:
+            last['timestamp'] = (last.get('timestamp') or deserialize_header(last['header_bytes'])['timestamp'])
+        self._last_processed_header = last
+        Logger.electrum.info(
+            'Last processed header: %s (%s)',
+            self._last_processed_header and self._last_processed_header['block_height'],
+            self._last_processed_header and self._last_processed_header['block_hash'],
+        )
+        if self._last_processed_header and self.synced:
+            for callback in self._on_new_best_header_callbacks:
+                self.loop.create_task(callback(self._last_processed_header))
 
     async def on_connected(self):
         if self.store_headers:
             self.loop.create_task(self.check_headers())
 
     async def start(self):
+        self.set_last_processed_header(self.repo.get_best_header())
         self.interface.add_header_subscribe_callback(self.on_new_header)
         self.interface.add_on_connected_callback(self.on_connected)
         self.loop.create_task(self.interface.start())
@@ -93,7 +98,7 @@ class HeadersReactor:
             return
 
         since_last_header = self._last_processed_header and int(time.time()) - self._last_processed_header['timestamp']
-        if int(since_last_header) < self.new_headers_fallback_poll_interval:
+        if since_last_header and int(since_last_header) < self.new_headers_fallback_poll_interval:
             retry_in = self.new_headers_fallback_poll_interval - since_last_header
             retry_in = retry_in > 0 and retry_in or self.new_headers_fallback_poll_interval // 2
             Logger.electrum.debug(
@@ -135,10 +140,12 @@ class HeadersReactor:
             return
 
         if network_best_header and network_best_header != self._last_processed_header:
+            self.synced = False
             self.loop.create_task(self.on_new_header(peer, network_best_header))
             self.loop.create_task(self.delayed_task(self.check_headers(), 30))  # loop or fallback
             Logger.electrum.debug('Fallback headers check: Rescheduling sync_header in %ss', 30)
         else:
+            self.synced = True
             self.loop.create_task(self.delayed_task(self.check_headers(), self.new_headers_fallback_poll_interval))
             Logger.electrum.debug(
                 'Fallback headers check: Rescheduling sync_headers in %ss',
@@ -151,32 +158,44 @@ class HeadersReactor:
             return
         try:
             not retries and await self.lock.acquire()
-            if self._last_processed_header and \
-                    self._last_processed_header['block_hash'] == network_best_header['block_hash'] and \
-                    self._last_processed_header['block_height'] == network_best_header['block_height']:
-                self.synced = True
-                return
-            local_best_header = self.repo.get_best_header()
+            last = self._last_processed_header or self.repo.get_best_header()
+            if last:
+                if last['block_hash'] == network_best_header['block_hash'] and \
+                    last['block_height'] == network_best_header['block_height']:
+                    self.synced = True
+                    self.set_last_processed_header(last)
 
-            if not local_best_header or local_best_header['block_height'] < network_best_header['block_height']:
-                self.synced = False
-                await self.on_local_headers_behind(local_best_header, network_best_header)
-                return
-            elif local_best_header['block_height'] > network_best_header['block_height']:
-                await self.on_network_headers_behind(network_best_header, peer=peer)
-                return
+                    for callback in self.on_best_height_hit_persistent_callbacks:
+                        self.loop.create_task(callback(self._last_processed_header))
 
-            block_hash = self.repo.get_block_hash(network_best_header['block_height'])
-            if block_hash and block_hash != network_best_header['block_hash']:
-                await self.interface.handle_peer_error(peer)
-                Logger.electrum.error('Inconsistency error with peer %s: (%s), %s',
-                                      peer.server_info, network_best_header, block_hash
-                                      )
-                await asyncio.sleep(self.sleep_time_on_inconsistency)
-                if not await self.on_inconsistent_header_received(peer, network_best_header, block_hash):
+                    if self.on_best_height_hit_volatile_callbacks:
+                        while 1:
+                            if not self.on_best_height_hit_volatile_callbacks:
+                                break
+                            callback = self.on_best_height_hit_volatile_callbacks.pop(0) or None
+                            self.loop.create_task(callback(self._last_processed_header))
                     return
-            self.set_last_processed_header(network_best_header)
-            #self.synced = True
+
+                elif last['block_height'] == network_best_header['block_height']:
+                    self.synced = False
+                    await self.interface.handle_peer_error(peer)
+                    Logger.electrum.error('Inconsistency error with peer %s: (%s), %s',
+                                          peer.server_info, network_best_header, last
+                                          )
+                    await asyncio.sleep(self.sleep_time_on_inconsistency)
+                    await self.on_inconsistent_header_received(peer, network_best_header, last['block_hash'])
+                    return
+
+                if last['block_height'] < network_best_header['block_height']:
+                    self.synced = False
+                    await self.on_local_headers_behind(last, network_best_header)
+                    return
+
+                if last['block_height'] > network_best_header['block_height']:
+                    await self.on_network_headers_behind(network_best_header, peer=peer)
+                    return
+            await self.on_local_headers_behind(last, network_best_header)
+
         except (
                 exceptions.NoQuorumOnResponsesException,
                 exceptions.NoPeersException,
@@ -187,16 +206,6 @@ class HeadersReactor:
                 return await self.on_new_header(peer, network_best_header, retries + 1)
             Logger.electrum.error('Excessive recursion on new_header. %s', e)
         finally:
-            if self.synced:
-                if self.on_best_height_hit_volatile_callbacks:
-                    while 1:
-                        if not self.on_best_height_hit_volatile_callbacks:
-                            break
-                        callback = self.on_best_height_hit_volatile_callbacks.pop(0) or None
-                        self.loop.create_task(callback(self._last_processed_header))
-                for callback in self.on_best_height_hit_persistent_callbacks:
-                    self.loop.create_task(callback(self._last_processed_header))
-
             not retries and self.lock.release()
 
     @database.atomic
@@ -213,6 +222,7 @@ class HeadersReactor:
             Logger.electrum.warning('Received a controversial header (%s), handling error with peer %s',
                                     received_header, peer.version)
             await self.interface.handle_peer_error(peer)
+            self.synced = True
             return True
 
         elif response['block_hash'] == received_header['block_hash']:
@@ -220,6 +230,8 @@ class HeadersReactor:
             orphaned = self.repo.remove_header_at_height(received_header['block_height'])
             await self.on_new_orphan(orphaned)
             self.synced = False
+            self.set_last_processed_header(self.repo.get_best_header())
+            self.synced = True
             return
 
         else:
@@ -279,8 +291,8 @@ class HeadersReactor:
             await asyncio.sleep(3)
             raise exceptions.NoHeadersException
         saved_headers = self.repo.save_headers(headers[1:])
+        self.synced = saved_headers[-1] == network_best_header
         self.set_last_processed_header(saved_headers[-1])
-        self.synced = True
 
     async def _save_header(self, network_best_header: Dict):
         # A new header is found, download again from multiple peers to verify it.
@@ -291,8 +303,9 @@ class HeadersReactor:
             network_best_header['header_bytes'],
             network_best_header['prev_block_hash']
         )
+        self.synced = self._last_processed_header and \
+                      network_best_header['block_height'] == self._last_processed_header['block_height'] + 1
         self.set_last_processed_header(network_best_header)
-        self.synced = True
 
     async def _fetch_headers_chunks(self, chunks_at_time, local_best_header, network_best_header):
         """
@@ -313,9 +326,9 @@ class HeadersReactor:
             _to = rewind_from + chunks_at_time
             if _from > (network_best_header['block_height'] // 2016):
                 saved_headers = saving_headers and self.repo.save_headers(saving_headers) or []
-                saved_headers and self.set_last_processed_header(saved_headers[-1])
-
-                self.synced = True
+                if saved_headers:
+                    self.synced = saved_headers[-1] == network_best_header
+                    self.set_last_processed_header(saved_headers[-1])
                 return
             res = await self.interface.get_headers_in_range_from_chunks(_from, _to, get_peer=True)
             peer, headers = res if res else (None, [])
@@ -340,9 +353,11 @@ class HeadersReactor:
                 len(headers), _from, _to, len(saving_headers)
             )
             if saved_headers:
+                self.synced = saved_headers[-1] == network_best_header
                 self.set_last_processed_header(saved_headers[-1])
                 current_height = self._last_processed_header['block_height']
             elif saving_headers:
+                self.synced = False
                 self.set_last_processed_header(None)
             i += 1
 

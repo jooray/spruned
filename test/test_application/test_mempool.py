@@ -6,7 +6,7 @@ import asyncio
 from pycoin.block import Block
 from pycoin.merkle import merkle
 
-from spruned.application.mempool_observer import MempoolObserver
+from spruned.application.observers.mempool_observer import MempoolObserver
 from spruned.daemon.bitcoin_p2p.p2p_connection import P2PConnectionPool
 from spruned.daemon.bitcoin_p2p.p2p_interface import P2PInterface
 from spruned.repositories.mempool_repository import MempoolRepository

@@ -1,4 +1,5 @@
 from spruned.application.context import ctx as _ctx, Context
+from spruned.application.observers.notifications_observer import NotificationsObserver
 from spruned.daemon.zeromq import build_zmq
 
 
@@ -30,7 +31,7 @@ def builder(ctx: Context):  # pragma: no cover
     headers_reactor = HeadersReactor(repository.headers, electrod_interface)
 
     if ctx.mempool_size:
-        from spruned.application.mempool_observer import MempoolObserver
+        from spruned.application.observers.mempool_observer import MempoolObserver
         mempool_observer = MempoolObserver(repository, p2p_interface)
         headers_reactor.add_on_new_header_callback(mempool_observer.on_block_header)
         p2p_interface.mempool = repository.mempool
@@ -47,8 +48,13 @@ def builder(ctx: Context):  # pragma: no cover
             ctx.mempool_size,
             service
         )
+    if ctx.blocknotify:
+        notifications_observer = NotificationsObserver()
+        notifications_observer.blocks_command = ctx.blocknotify
+        headers_reactor.add_on_new_header_callback(notifications_observer.on_block)
+
     blocks_reactor = BlocksReactor(repository, p2p_interface, keep_blocks=int(ctx.keep_blocks))
-    headers_reactor.add_on_best_height_hit_persistent_callbacks(p2p_connectionpool.set_best_header)
+    headers_reactor.add_on_new_header_callback(p2p_connectionpool.set_best_header)
     return jsonrpc_server, headers_reactor, blocks_reactor, repository, \
            cache, zmq_context, zmq_observer, p2p_interface
 

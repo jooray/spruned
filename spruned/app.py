@@ -142,6 +142,11 @@ if sys.version > '3.5.2':  # pragma: no cover
         action='store', dest='mempool_size', default=int(ctx.mempool_size),
         help='Set the mempool size in megabytes (0 = mempool disabled, default) - VERY experimental'
     )
+    parser.add_argument(
+        '--blocknotify',
+        action='store', dest='blocknotify', default='',
+        help='Execute command when the best block changes (%s in cmd is replaced by block hash)'
+    )
 
 
     def main():  # pragma: no cover
